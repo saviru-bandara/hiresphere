@@ -78,7 +78,10 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: services/api-gateway/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: api-gateway
+        EXPOSE_PORT: 8080
     container_name: hiresphere-api-gateway
     ports:
       - "8080:8080"
@@ -97,7 +100,10 @@ services:
   profile-service:
     build:
       context: .
-      dockerfile: services/profile-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: profile-service
+        EXPOSE_PORT: 8081
     container_name: hiresphere-profile-service
     ports:
       - "8081:8081"
@@ -119,7 +125,10 @@ services:
   search-service:
     build:
       context: .
-      dockerfile: services/search-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: search-service
+        EXPOSE_PORT: 8082
     container_name: hiresphere-search-service
     ports:
       - "8082:8082"
@@ -139,7 +148,10 @@ services:
   booking-service:
     build:
       context: .
-      dockerfile: services/booking-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: booking-service
+        EXPOSE_PORT:  8083
     container_name: hiresphere-booking-service
     ports:
       - "8083:8083"
@@ -167,7 +179,10 @@ services:
   submission-service:
     build:
       context: .
-      dockerfile: services/submission-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: submission-service
+        EXPOSE_PORT:  8084
     container_name: hiresphere-submission-service
     ports:
       - "8084:8084"
@@ -194,7 +209,10 @@ services:
   messaging-service:
     build:
       context: .
-      dockerfile: services/messaging-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: messaging-service
+        EXPOSE_PORT:  8085
     container_name: hiresphere-messaging-service
     ports:
       - "8085:8085"
@@ -216,7 +234,10 @@ services:
   live-session-service:
     build:
       context: .
-      dockerfile: services/live-session-service/Dockerfile
+      dockerfile: Dockerfile
+      args:
+        SERVICE_NAME: live-session-service
+        EXPOSE_PORT:  8086
     container_name: hiresphere-live-session-service
     ports:
       - "8086:8086"

@@ -10,15 +10,15 @@
   <packaging>pom</packaging>
   <name>HireSphere Parent POM</name>
 
-  <modules>
-    <module>services/api-gateway</module>
-    <module>services/profile-service</module>
-    <module>services/search-service</module>
-    <module>services/booking-service</module>
-    <module>services/submission-service</module>
-    <module>services/messaging-service</module>
-    <module>services/live-session-service</module>
-  </modules>
+<!--  <modules>-->
+<!--    <module>services/api-gateway</module>-->
+<!--    <module>services/profile-service</module>-->
+<!--    <module>services/search-service</module>-->
+<!--    <module>services/booking-service</module>-->
+<!--    <module>services/submission-service</module>-->
+<!--    <module>services/messaging-service</module>-->
+<!--    <module>services/live-session-service</module>-->
+<!--  </modules>-->
 
   <parent>
     <groupId>org.springframework.boot</groupId>

@@ -12,7 +12,7 @@ import MessagingPage  from './pages/MessagingPage';
 import SessionPage    from './pages/SessionPage';
 import DashboardPage  from './pages/DashboardPage';
 
-export default function App() {
+export default function Index() {
   return (
     // Authenticator wraps entire app — handles Cognito sign-up/sign-in
     <Authenticator>
