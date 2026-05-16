@@ -1,0 +1,40 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: live-session-service
+
+booking:
+  service:
+    url: ${BOOKING_SERVICE_URL:http://localhost:8083}
+
+webrtc:
+  turn:
+    url:        ${TURN_SERVER_URL:turn:localhost:3478}
+    username:   ${TURN_USERNAME:hiresphere}
+    credential: ${TURN_CREDENTIAL:hiresphere}
+
+resilience4j:
+  bulkhead:
+    instances:
+      websocket-sessions:
+        max-concurrent-calls: 50       # max 50 concurrent live sessions per pod
+        max-wait-duration: 0ms
+  circuitbreaker:
+    instances:
+      booking-service:
+        sliding-window-size: 5
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 10s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.hiresphere: DEBUG
+    org.springframework.web.socket: INFO

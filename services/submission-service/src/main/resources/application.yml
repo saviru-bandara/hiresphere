@@ -1,0 +1,47 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: submission-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:hiresphere}
+    username: ${DB_USER:hsadmin}
+    password: ${DB_PASSWORD:localpassword}
+    hikari:
+      maximum-pool-size: 8
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+s3:
+  bucket-name: ${S3_BUCKET_NAME:hiresphere-submissions-local}
+
+sqs:
+  github-analysis-queue: ${SQS_GITHUB_ANALYSIS_QUEUE:http://localhost:4566/000000000000/hiresphere-github-analysis}
+
+aws:
+  region: ${AWS_REGION:us-east-1}
+  endpoint: ${AWS_ENDPOINT_URL:}
+
+resilience4j:
+  retry:
+    instances:
+      sqs:
+        max-attempts: 3
+        wait-duration: 500ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.hiresphere: DEBUG

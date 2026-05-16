@@ -1,0 +1,39 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: messaging-service
+
+dynamodb:
+  messages-table: ${DYNAMODB_MESSAGES_TABLE:hiresphere-messages}
+
+sqs:
+  notification-queue-url: ${SQS_NOTIFICATION_QUEUE_URL:http://localhost:4566/000000000000/hiresphere-notification-delivery}
+
+aws:
+  region: ${AWS_REGION:us-east-1}
+  endpoint: ${AWS_ENDPOINT_URL:}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      dynamodb:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 20s
+  retry:
+    instances:
+      sqs:
+        max-attempts: 3
+        wait-duration: 500ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+logging:
+  level:
+    com.hiresphere: DEBUG

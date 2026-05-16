@@ -22,3 +22,13 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+/services/profile-service/target/
+/*/*/target/*
+*/target/*
+/services/search-service/target/
+/services/submission-service/target/
+/services/messaging-service/target/
+/services/booking-service/target/
+/services/live-session-service/target/
+/services/api-gateway/target/*
+*/target

@@ -1,5 +1,6 @@
 package com.hiresphere.livesessionservice.handler;
 
+import com.hiresphere.livesessionservice.service.SessionVerificationService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SignalingHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
+    private final SessionVerificationService verificationService;
 
     // bookingId -> Map<userId, WebSocketSession>
     private final Map<String, Map<String, WebSocketSession>> rooms = new ConcurrentHashMap<>();
@@ -54,6 +56,16 @@ public class SignalingHandler extends TextWebSocketHandler {
 
     private void handleJoin(WebSocketSession session, String bookingId,
                              String userId, JsonNode payload) throws Exception {
+        // Verify booking is confirmed and user is a participant before allowing join
+        if (!verificationService.verifySession(bookingId, userId)) {
+            log.warn("Rejected JOIN for bookingId={} userId={} — not authorised", bookingId, userId);
+            Map<String, String> denied = Map.of("type", "SESSION_DENIED",
+                "reason", "Booking not confirmed or user not authorised");
+            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(denied)));
+            session.close();
+            return;
+        }
+
         rooms.computeIfAbsent(bookingId, k -> new ConcurrentHashMap<>()).put(userId, session);
         log.info("User {} joined session for bookingId={}", userId, bookingId);
 
