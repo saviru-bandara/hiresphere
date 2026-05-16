@@ -1,0 +1,286 @@
+# ── API GATEWAY ───────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: hiresphere
+  labels:
+    app: api-gateway
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        version: v1
+    spec:
+      serviceAccountName: default-service-sa
+      containers:
+        - name: api-gateway
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/api-gateway:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+            - configMapRef: { name: api-gateway-config }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 40
+            periodSeconds: 15
+---
+# ── PROFILE SERVICE ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: profile-service
+  namespace: hiresphere
+  labels:
+    app: profile-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: profile-service
+  template:
+    metadata:
+      labels:
+        app: profile-service
+    spec:
+      serviceAccountName: profile-service-sa
+      containers:
+        - name: profile-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/profile-service:latest
+          ports:
+            - containerPort: 8081
+              name: http
+            - containerPort: 9091
+              name: grpc
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8081 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8081 }
+            initialDelaySeconds: 40
+            periodSeconds: 15
+---
+# ── SEARCH SERVICE ────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-service
+  namespace: hiresphere
+  labels:
+    app: search-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: search-service
+  template:
+    metadata:
+      labels:
+        app: search-service
+    spec:
+      serviceAccountName: default-service-sa
+      containers:
+        - name: search-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/search-service:latest
+          ports:
+            - containerPort: 8082
+              name: http
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+            - configMapRef: { name: search-service-config }
+          resources:
+            requests: { cpu: "200m", memory: "384Mi" }
+            limits:   { cpu: "400m", memory: "768Mi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8082 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8082 }
+            initialDelaySeconds: 40
+            periodSeconds: 15
+---
+# ── BOOKING SERVICE ───────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking-service
+  namespace: hiresphere
+  labels:
+    app: booking-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: booking-service
+  template:
+    metadata:
+      labels:
+        app: booking-service
+    spec:
+      serviceAccountName: booking-service-sa
+      containers:
+        - name: booking-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/booking-service:latest
+          ports:
+            - containerPort: 8083
+              name: http
+            - containerPort: 9093
+              name: grpc
+          envFrom:
+            - configMapRef:  { name: hiresphere-global-config }
+            - configMapRef:  { name: booking-service-config }
+            - secretRef:     { name: hiresphere-secrets }
+          resources:
+            requests: { cpu: "300m", memory: "512Mi" }
+            limits:   { cpu: "600m", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8083 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8083 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+---
+# ── SUBMISSION SERVICE ────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: submission-service
+  namespace: hiresphere
+  labels:
+    app: submission-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: submission-service
+  template:
+    metadata:
+      labels:
+        app: submission-service
+    spec:
+      serviceAccountName: submission-service-sa
+      containers:
+        - name: submission-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/submission-service:latest
+          ports:
+            - containerPort: 8084
+              name: http
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+            - configMapRef: { name: submission-service-config }
+            - secretRef:    { name: hiresphere-secrets }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8084 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8084 }
+            initialDelaySeconds: 60
+            periodSeconds: 15
+---
+# ── MESSAGING SERVICE ─────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: messaging-service
+  namespace: hiresphere
+  labels:
+    app: messaging-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: messaging-service
+  template:
+    metadata:
+      labels:
+        app: messaging-service
+    spec:
+      serviceAccountName: messaging-service-sa
+      containers:
+        - name: messaging-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/messaging-service:latest
+          ports:
+            - containerPort: 8085
+              name: http
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+            - configMapRef: { name: messaging-service-config }
+          resources:
+            requests: { cpu: "200m", memory: "384Mi" }
+            limits:   { cpu: "400m", memory: "768Mi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8085 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8085 }
+            initialDelaySeconds: 40
+            periodSeconds: 15
+---
+# ── LIVE SESSION SERVICE ──────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: live-session-service
+  namespace: hiresphere
+  labels:
+    app: live-session-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: live-session-service
+  template:
+    metadata:
+      labels:
+        app: live-session-service
+    spec:
+      serviceAccountName: default-service-sa
+      containers:
+        - name: live-session-service
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/hiresphere/live-session-service:latest
+          ports:
+            - containerPort: 8086
+              name: http
+          envFrom:
+            - configMapRef: { name: hiresphere-global-config }
+            - configMapRef: { name: live-session-config }
+          resources:
+            requests: { cpu: "300m", memory: "512Mi" }
+            limits:   { cpu: "750m", memory: "1Gi" }
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8086 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /actuator/health, port: 8086 }
+            initialDelaySeconds: 40
+            periodSeconds: 15

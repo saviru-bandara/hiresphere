@@ -1,0 +1,51 @@
+syntax = "proto3";
+package com.hiresphere.booking;
+option java_multiple_files = true;
+option java_package = "com.hiresphere.booking.grpc";
+
+enum BookingStatus {
+  PENDING   = 0;
+  CONFIRMED = 1;
+  CANCELLED = 2;
+  COMPLETED = 3;
+}
+
+message Booking {
+  string        booking_id    = 1;
+  string        candidate_id  = 2;
+  string        interviewer_id = 3;
+  string        slot_id       = 4;
+  int64         start_time    = 5;
+  int64         end_time      = 6;
+  BookingStatus status        = 7;
+  double        amount_paid   = 8;
+  string        stripe_payment_intent = 9;
+  string        session_token = 10;
+  int64         created_at    = 11;
+}
+
+message VerifyBookingRequest {
+  string booking_id    = 1;
+  string candidate_id  = 2;
+  string interviewer_id = 3;
+}
+
+message VerifyBookingResponse {
+  bool    valid        = 1;
+  Booking booking      = 2;
+  string  session_token = 3;
+}
+
+message GetBookingRequest {
+  string booking_id = 1;
+}
+
+message GetBookingResponse {
+  Booking booking = 1;
+  bool    found   = 2;
+}
+
+service BookingService {
+  rpc VerifyBooking (VerifyBookingRequest) returns (VerifyBookingResponse);
+  rpc GetBooking    (GetBookingRequest)    returns (GetBookingResponse);
+}

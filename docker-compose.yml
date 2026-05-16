@@ -1,0 +1,267 @@
+version: "3.9"
+
+# ─── LOCAL DEV STACK ──────────────────────────────────────────────────────────
+# Starts: LocalStack (AWS), PostgreSQL, Redis, all 7 Spring Boot services
+# Usage: docker-compose up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  hiresphere:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  localstack-data:
+
+services:
+
+  # ── LocalStack (AWS emulation) ─────────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3.3
+    container_name: hiresphere-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,sqs,dynamodb,cognito-idp,secretsmanager,ses
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - PERSIST_ALL=1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
+    networks:
+      - hiresphere
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: hiresphere-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB:       hiresphere
+      POSTGRES_USER:     hsadmin
+      POSTGRES_PASSWORD: localpassword
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - hiresphere
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hsadmin -d hiresphere"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Redis (ElastiCache emulation) ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: hiresphere-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - hiresphere
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── API Gateway ────────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: hiresphere-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      COGNITO_USER_POOL_ID:   local-pool
+      AWS_REGION:             us-east-1
+      FRONTEND_URL:           http://localhost:3000
+    depends_on:
+      localstack: { condition: service_healthy }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Profile Service ────────────────────────────────────────────────────────
+  profile-service:
+    build:
+      context: .
+      dockerfile: services/profile-service/Dockerfile
+    container_name: hiresphere-profile-service
+    ports:
+      - "8081:8081"
+      - "9091:9091"   # gRPC
+    environment:
+      SPRING_PROFILES_ACTIVE:    local
+      AWS_REGION:                us-east-1
+      AWS_ENDPOINT_URL:          http://localstack:4566
+      AWS_ACCESS_KEY_ID:         test
+      AWS_SECRET_ACCESS_KEY:     test
+      DYNAMODB_PROFILES_TABLE:   hiresphere-profiles
+    depends_on:
+      localstack: { condition: service_healthy }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Search Service ─────────────────────────────────────────────────────────
+  search-service:
+    build:
+      context: .
+      dockerfile: services/search-service/Dockerfile
+    container_name: hiresphere-search-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE:  local
+      SPRING_REDIS_HOST:       redis
+      SPRING_REDIS_PORT:       "6379"
+      SERVICES_PROFILE_URL:    http://profile-service:8081
+    depends_on:
+      redis:          { condition: service_healthy }
+      profile-service: { condition: service_started }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Booking Service ────────────────────────────────────────────────────────
+  booking-service:
+    build:
+      context: .
+      dockerfile: services/booking-service/Dockerfile
+    container_name: hiresphere-booking-service
+    ports:
+      - "8083:8083"
+      - "9093:9093"   # gRPC
+    environment:
+      SPRING_PROFILES_ACTIVE:  local
+      DB_HOST:                 postgres
+      DB_NAME:                 hiresphere
+      DB_USER:                 hsadmin
+      DB_PASSWORD:             localpassword
+      AWS_REGION:              us-east-1
+      AWS_ENDPOINT_URL:        http://localstack:4566
+      AWS_ACCESS_KEY_ID:       test
+      AWS_SECRET_ACCESS_KEY:   test
+      SQS_BOOKING_EVENTS_URL:  http://localstack:4566/000000000000/hiresphere-booking-events
+      STRIPE_SECRET_KEY:       sk_test_placeholder
+    depends_on:
+      postgres:   { condition: service_healthy }
+      localstack: { condition: service_healthy }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Submission Service ─────────────────────────────────────────────────────
+  submission-service:
+    build:
+      context: .
+      dockerfile: services/submission-service/Dockerfile
+    container_name: hiresphere-submission-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_PROFILES_ACTIVE:  local
+      DB_HOST:                 postgres
+      DB_NAME:                 hiresphere
+      DB_USER:                 hsadmin
+      DB_PASSWORD:             localpassword
+      AWS_REGION:              us-east-1
+      AWS_ENDPOINT_URL:        http://localstack:4566
+      AWS_ACCESS_KEY_ID:       test
+      AWS_SECRET_ACCESS_KEY:   test
+      S3_BUCKET_NAME:          hiresphere-submissions-local
+      SQS_GITHUB_ANALYSIS_QUEUE: http://localstack:4566/000000000000/hiresphere-github-analysis
+    depends_on:
+      postgres:   { condition: service_healthy }
+      localstack: { condition: service_healthy }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Messaging Service ──────────────────────────────────────────────────────
+  messaging-service:
+    build:
+      context: .
+      dockerfile: services/messaging-service/Dockerfile
+    container_name: hiresphere-messaging-service
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_PROFILES_ACTIVE:     local
+      AWS_REGION:                 us-east-1
+      AWS_ENDPOINT_URL:           http://localstack:4566
+      AWS_ACCESS_KEY_ID:          test
+      AWS_SECRET_ACCESS_KEY:      test
+      DYNAMODB_MESSAGES_TABLE:    hiresphere-messages
+      SQS_NOTIFICATION_QUEUE_URL: http://localstack:4566/000000000000/hiresphere-notification-delivery
+    depends_on:
+      localstack: { condition: service_healthy }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── Live Session Service ───────────────────────────────────────────────────
+  live-session-service:
+    build:
+      context: .
+      dockerfile: services/live-session-service/Dockerfile
+    container_name: hiresphere-live-session-service
+    ports:
+      - "8086:8086"
+    environment:
+      SPRING_PROFILES_ACTIVE:  local
+      BOOKING_SERVICE_URL:     http://booking-service:8083
+    depends_on:
+      booking-service: { condition: service_started }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+
+  # ── React Frontend (nginx) ─────────────────────────────────────────────────
+  # Serves the built React SPA on port 3000.
+  # nginx proxies /api/* → api-gateway:8080 and /ws/* → live-session-service:8086
+  # so the browser never makes cross-origin requests.
+  #
+  # For hot-reload development instead, run:
+  #   cd frontend && npm start
+  # and comment this service out.
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # All REACT_APP_* vars baked into the JS bundle at build time
+        REACT_APP_API_URL: http://localhost:3000/api
+        REACT_APP_WS_URL: ws://localhost:3000/ws
+        REACT_APP_TURN_URL: turn:localhost:3478
+        REACT_APP_COGNITO_POOL_ID: local-pool
+        REACT_APP_COGNITO_CLIENT_ID: local-client
+        REACT_APP_COGNITO_REGION: us-east-1
+        REACT_APP_S3_BUCKET: hiresphere-submissions-local
+        REACT_APP_STRIPE_PUBLIC_KEY: pk_test_placeholder
+    container_name: hiresphere-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      api-gateway: { condition: service_started }
+      live-session-service: { condition: service_started }
+    networks:
+      - hiresphere
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5

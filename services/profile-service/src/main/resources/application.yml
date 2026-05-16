@@ -1,0 +1,39 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: profile-service
+
+grpc:
+  server:
+    port: 9091
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+aws:
+  region: ${AWS_REGION:us-east-1}
+
+dynamodb:
+  profiles-table: ${DYNAMODB_PROFILES_TABLE:hiresphere-profiles}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      dynamodb:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+
+---
+spring:
+  config:
+    activate:
+      on-profile: local
+# LocalStack DynamoDB for local development
+aws:
+  endpoint: http://localhost:4566

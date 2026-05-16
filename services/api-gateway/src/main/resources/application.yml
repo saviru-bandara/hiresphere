@@ -1,0 +1,133 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      # Global CORS — React frontend origin
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "${FRONTEND_URL:https://your-amplify-url.amplifyapp.com}"
+            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
+            allowedHeaders: ["*"]
+            allowCredentials: true
+      routes:
+        # ── Profile Service ──────────────────────────────────────
+        - id: profile-service
+          uri: lb://profile-service
+          predicates:
+            - Path=/api/profiles/**
+          filters:
+            - StripPrefix=1
+
+        # ── Search Service ───────────────────────────────────────
+        - id: search-service
+          uri: lb://search-service
+          predicates:
+            - Path=/api/search/**
+          filters:
+            - StripPrefix=1
+
+        # ── Booking Service ──────────────────────────────────────
+        - id: booking-service
+          uri: lb://booking-service
+          predicates:
+            - Path=/api/bookings/**
+          filters:
+            - StripPrefix=1
+
+        # ── Submission Service ───────────────────────────────────
+        - id: submission-service
+          uri: lb://submission-service
+          predicates:
+            - Path=/api/submissions/**
+          filters:
+            - StripPrefix=1
+
+        # ── Messaging Service ────────────────────────────────────
+        - id: messaging-service
+          uri: lb://messaging-service
+          predicates:
+            - Path=/api/messages/**
+          filters:
+            - StripPrefix=1
+
+        # ── Live Session Service (WebSocket) ─────────────────────
+        - id: live-session-service
+          uri: lb://live-session-service
+          predicates:
+            - Path=/api/sessions/**
+          filters:
+            - StripPrefix=1
+
+  # Cognito JWT validation
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Replace with your Cognito User Pool details
+          jwk-set-uri: https://cognito-idp.${AWS_REGION:us-east-1}.amazonaws.com/${COGNITO_USER_POOL_ID}/.well-known/jwks.json
+          issuer-uri: https://cognito-idp.${AWS_REGION:us-east-1}.amazonaws.com/${COGNITO_USER_POOL_ID}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.hiresphere: DEBUG
+
+---
+# Local development profile
+spring:
+  config:
+    activate:
+      on-profile: local
+  cloud:
+    gateway:
+      routes:
+        - id: profile-service-local
+          uri: http://localhost:8081
+          predicates: [Path=/api/profiles/**]
+          filters: [StripPrefix=1]
+        - id: search-service-local
+          uri: http://localhost:8082
+          predicates: [Path=/api/search/**]
+          filters: [StripPrefix=1]
+        - id: booking-service-local
+          uri: http://localhost:8083
+          predicates: [Path=/api/bookings/**]
+          filters: [StripPrefix=1]
+        - id: submission-service-local
+          uri: http://localhost:8084
+          predicates: [Path=/api/submissions/**]
+          filters: [StripPrefix=1]
+        - id: messaging-service-local
+          uri: http://localhost:8085
+          predicates: [Path=/api/messages/**]
+          filters: [StripPrefix=1]
+        - id: live-session-service-local
+          uri: http://localhost:8086
+          predicates: [Path=/api/sessions/**]
+          filters: [StripPrefix=1]
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:4566/_aws/cognito-idp/us-east-1/test-pool/.well-known/jwks.json

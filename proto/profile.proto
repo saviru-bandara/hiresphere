@@ -1,0 +1,124 @@
+syntax = "proto3";
+package com.hiresphere.profile;
+option java_multiple_files = true;
+option java_package = "com.hiresphere.profile.grpc";
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+enum ProfileType {
+  CANDIDATE  = 0;
+  INTERVIEWER = 1;
+}
+
+enum InterviewType {
+  SYSTEM_DESIGN    = 0;
+  DATA_STRUCTURES  = 1;
+  BEHAVIORAL       = 2;
+  FRONTEND         = 3;
+  BACKEND          = 4;
+  FULLSTACK        = 5;
+  DEVOPS           = 6;
+}
+
+// ─── MESSAGES ─────────────────────────────────────────────────────────────────
+message Profile {
+  string   user_id       = 1;
+  string   name          = 2;
+  string   email         = 3;
+  ProfileType profile_type = 4;
+  string   bio           = 5;
+  repeated string domains        = 6;
+  repeated string badges         = 7;
+  float    rating        = 8;
+  int32    total_reviews = 9;
+  int32    years_experience = 10;
+  repeated InterviewType interview_types = 11;
+  repeated AvailabilitySlot availability  = 12;
+  string   avatar_url    = 13;
+  int32    price_per_hour = 14;
+  string   linkedin_url  = 15;
+  string   github_url    = 16;
+  int64    created_at    = 17;
+  int64    updated_at    = 18;
+}
+
+message AvailabilitySlot {
+  string slot_id    = 1;
+  int64  start_time = 2;
+  int64  end_time   = 3;
+  bool   is_booked  = 4;
+}
+
+// ─── REQUEST / RESPONSE ───────────────────────────────────────────────────────
+message GetProfileRequest {
+  string user_id = 1;
+}
+
+message GetProfileResponse {
+  Profile profile = 1;
+  bool    found   = 2;
+}
+
+message CreateProfileRequest {
+  Profile profile = 1;
+}
+
+message CreateProfileResponse {
+  Profile profile = 1;
+  bool    success = 2;
+  string  message = 3;
+}
+
+message UpdateProfileRequest {
+  Profile profile = 1;
+}
+
+message UpdateProfileResponse {
+  Profile profile = 1;
+  bool    success = 2;
+}
+
+message SearchInterviewersRequest {
+  string         domain         = 1;
+  InterviewType  interview_type = 2;
+  int32          min_experience = 3;
+  float          min_rating     = 4;
+  int32          max_price      = 5;
+  int32          page           = 6;
+  int32          page_size      = 7;
+}
+
+message SearchInterviewersResponse {
+  repeated Profile interviewers = 1;
+  int32            total        = 2;
+  int32            page         = 3;
+}
+
+message GetAvailabilityRequest {
+  string user_id    = 1;
+  int64  from_epoch = 2;
+  int64  to_epoch   = 3;
+}
+
+message GetAvailabilityResponse {
+  repeated AvailabilitySlot slots = 1;
+}
+
+message UpdateRatingRequest {
+  string user_id    = 1;
+  float  new_rating = 2;
+  int32  review_count = 3;
+}
+
+message UpdateRatingResponse {
+  bool success = 1;
+}
+
+// ─── SERVICE ──────────────────────────────────────────────────────────────────
+service ProfileService {
+  rpc GetProfile          (GetProfileRequest)          returns (GetProfileResponse);
+  rpc CreateProfile       (CreateProfileRequest)       returns (CreateProfileResponse);
+  rpc UpdateProfile       (UpdateProfileRequest)       returns (UpdateProfileResponse);
+  rpc SearchInterviewers  (SearchInterviewersRequest)  returns (SearchInterviewersResponse);
+  rpc GetAvailability     (GetAvailabilityRequest)     returns (GetAvailabilityResponse);
+  rpc UpdateRating        (UpdateRatingRequest)        returns (UpdateRatingResponse);
+}

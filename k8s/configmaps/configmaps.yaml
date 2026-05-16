@@ -1,0 +1,83 @@
+---
+# Global config shared across all services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hiresphere-global-config
+  namespace: hiresphere
+data:
+  AWS_REGION:               "us-east-1"
+  SPRING_PROFILES_ACTIVE:   "prod"
+  DYNAMODB_PROFILES_TABLE:  "hiresphere-profiles"
+  DYNAMODB_MESSAGES_TABLE:  "hiresphere-messages"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-config
+  namespace: hiresphere
+data:
+  SERVER_PORT:          "8080"
+  FRONTEND_URL:         "https://your-amplify-app.amplifyapp.com"
+  # Set from CFN output: CognitoUserPoolId
+  COGNITO_USER_POOL_ID: "REPLACE_WITH_CFN_OUTPUT"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: booking-service-config
+  namespace: hiresphere
+data:
+  SERVER_PORT:  "8083"
+  GRPC_PORT:    "9093"
+  DB_NAME:      "hiresphere"
+  # SQS URLs from CFN outputs
+  SQS_BOOKING_EVENTS_URL: "REPLACE_WITH_CFN_OUTPUT_BookingEventsQueueURL"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: submission-service-config
+  namespace: hiresphere
+data:
+  SERVER_PORT:   "8084"
+  # S3 bucket from CFN output: S3BucketName
+  S3_BUCKET_NAME: "REPLACE_WITH_CFN_OUTPUT_S3BucketName"
+  SQS_GITHUB_ANALYSIS_QUEUE: "REPLACE_WITH_CFN_OUTPUT_GitHubAnalysisQueueURL"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: search-service-config
+  namespace: hiresphere
+data:
+  SERVER_PORT:          "8082"
+  SPRING_REDIS_HOST:    "hiresphere-redis"
+  SPRING_REDIS_PORT:    "6379"
+  SERVICES_PROFILE_URL: "http://profile-service:8081"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: messaging-service-config
+  namespace: hiresphere
+data:
+  SERVER_PORT: "8085"
+  SQS_NOTIFICATION_QUEUE_URL: "REPLACE_WITH_CFN_OUTPUT"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: live-session-config
+  namespace: hiresphere
+data:
+  SERVER_PORT:         "8086"
+  BOOKING_SERVICE_URL: "http://booking-service:8083"
+  # Coturn TURN server IP from CFN output
+  TURN_SERVER_URL:     "turn:REPLACE_WITH_COTURN_IP:3478"
