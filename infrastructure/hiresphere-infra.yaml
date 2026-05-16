@@ -1,0 +1,873 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  HireSphere – Full cloud infrastructure stack.
+  Provisions VPC, EKS, RDS, DynamoDB, SQS, Cognito, ECR,
+  S3, Secrets Manager, IAM IRSA roles, and Coturn EC2 instance.
+  SE6020 Cloud Computing Assignment – 2026 Semester 03.
+
+# ─────────────────────────────────────────────────────────────────
+# PARAMETERS
+# ─────────────────────────────────────────────────────────────────
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: hiresphere
+    Description: Prefix applied to all resource names.
+
+  KubernetesVersion:
+    Type: String
+    Default: "1.30"
+    AllowedValues: ["1.28", "1.29", "1.30"]
+
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type for EKS worker nodes.
+
+  NodeGroupMinSize:
+    Type: Number
+    Default: 2
+
+  NodeGroupMaxSize:
+    Type: Number
+    Default: 6
+
+  NodeGroupDesiredSize:
+    Type: Number
+    Default: 2
+
+  RDSInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: Use db.t3.micro for Viva demo, db.t3.small for production.
+
+  DBName:
+    Type: String
+    Default: hiresphere
+
+  DBUsername:
+    Type: String
+    Default: hsadmin
+    NoEcho: true
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    Description: Must be at least 12 characters. Stored in Secrets Manager.
+
+  CoturnInstanceType:
+    Type: String
+    Default: t3.small
+    Description: EC2 instance type for the Coturn TURN/STUN server.
+
+  AmazonLinux2AMI:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+
+# ─────────────────────────────────────────────────────────────────
+# RESOURCES
+# ─────────────────────────────────────────────────────────────────
+Resources:
+
+  # ═══════════════════════════════════════════════
+  # 1. VPC & NETWORKING
+  # ═══════════════════════════════════════════════
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-igw"
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnets (ALB, NAT Gateway, Coturn)
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-a"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-public-b"
+        - Key: kubernetes.io/role/elb
+          Value: "1"
+
+  # Private Subnets (EKS nodes, RDS)
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-a"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-private-b"
+        - Key: kubernetes.io/role/internal-elb
+          Value: "1"
+
+  # NAT Gateway (for outbound internet from private subnets)
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-nat"
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ═══════════════════════════════════════════════
+  # 2. SECURITY GROUPS
+  # ═══════════════════════════════════════════════
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB – allow HTTP/HTTPS from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-alb-sg"
+
+  EKSNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EKS worker nodes – allow ALB and intra-node
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 1025
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-node-sg"
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS PostgreSQL – allow only EKS nodes
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EKSNodeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-rds-sg"
+
+  CoturnSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Coturn TURN/STUN server – WebRTC relay
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: 3478
+          ToPort: 3478
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 5349
+          ToPort: 5349
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 49152
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-coturn-sg"
+
+  # ═══════════════════════════════════════════════
+  # 3. IAM – EKS CLUSTER & NODE ROLES
+  # ═══════════════════════════════════════════════
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-eks-cluster-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  EKSNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-eks-node-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  # IRSA – Profile & Messaging Service (DynamoDB)
+  ProfileServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-profile-service-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:hiresphere:profile-service-sa"
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt ProfilesTable.Arn
+                  - !GetAtt MessagesTable.Arn
+
+  # IRSA – Submission Service (S3 + RDS via Secrets Manager)
+  SubmissionServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-submission-service-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:hiresphere:submission-service-sa"
+      Policies:
+        - PolicyName: S3SQSAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:GeneratePresignedUrl
+                Resource: !Sub "${SubmissionsBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                Resource: !GetAtt GitHubAnalysisQueue.Arn
+
+  # IRSA – Booking Service (SQS + Secrets Manager)
+  BookingServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-booking-service-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/${EKSCluster.OpenIdConnectIssuerUrl}"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "${EKSCluster.OpenIdConnectIssuerUrl}:sub": "system:serviceaccount:hiresphere:booking-service-sa"
+      Policies:
+        - PolicyName: SQSSecretsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt BookingEventsQueue.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref RDSSecret
+
+  # ═══════════════════════════════════════════════
+  # 4. EKS CLUSTER & NODE GROUP
+  # ═══════════════════════════════════════════════
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Sub "${EnvironmentName}-cluster"
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnetA
+          - !Ref PrivateSubnetB
+          - !Ref PublicSubnetA
+          - !Ref PublicSubnetB
+        SecurityGroupIds:
+          - !Ref EKSNodeSecurityGroup
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+
+  EKSNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref EKSCluster
+      NodegroupName: !Sub "${EnvironmentName}-nodes"
+      NodeRole: !GetAtt EKSNodeRole.Arn
+      Subnets:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      CapacityType: ON_DEMAND
+      ScalingConfig:
+        MinSize: !Ref NodeGroupMinSize
+        MaxSize: !Ref NodeGroupMaxSize
+        DesiredSize: !Ref NodeGroupDesiredSize
+      Labels:
+        role: worker
+        env: !Ref EnvironmentName
+
+  # ═══════════════════════════════════════════════
+  # 5. RDS POSTGRESQL
+  # ═══════════════════════════════════════════════
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: HireSphere RDS subnet group
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${EnvironmentName}/rds-credentials"
+      Description: RDS master credentials for HireSphere
+      SecretString: !Sub |
+        {
+          "username": "${DBUsername}",
+          "password": "${DBPassword}",
+          "host": "${RDSInstance.Endpoint.Address}",
+          "port": "5432",
+          "dbname": "${DBName}"
+        }
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${EnvironmentName}-postgres"
+      DBName: !Ref DBName
+      DBInstanceClass: !Ref RDSInstanceClass
+      Engine: postgres
+      EngineVersion: "16.2"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false           # Set true for production
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      BackupRetentionPeriod: 7
+      DeletionProtection: false  # Set true for production
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-postgres"
+
+  # ═══════════════════════════════════════════════
+  # 6. DYNAMODB TABLES
+  # ═══════════════════════════════════════════════
+  ProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-profiles"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: profileType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: profileType-index
+          KeySchema:
+            - AttributeName: profileType
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  MessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${EnvironmentName}-messages"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: conversationId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: conversationId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ═══════════════════════════════════════════════
+  # 7. AMAZON S3
+  # ═══════════════════════════════════════════════
+  SubmissionsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvironmentName}-submissions-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveRecordings
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: GLACIER
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ["*"]
+            MaxAge: 3600
+
+  # ═══════════════════════════════════════════════
+  # 8. SQS QUEUES
+  # ═══════════════════════════════════════════════
+  BookingEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-booking-events"
+      MessageRetentionPeriod: 86400   # 1 day
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BookingEventsDLQ.Arn
+        maxReceiveCount: 3
+
+  BookingEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-booking-events-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+
+  NotificationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-notification-delivery"
+      MessageRetentionPeriod: 86400
+      VisibilityTimeout: 30
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationDLQ.Arn
+        maxReceiveCount: 3
+
+  NotificationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-notification-dlq"
+      MessageRetentionPeriod: 1209600
+
+  GitHubAnalysisQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-github-analysis"
+      MessageRetentionPeriod: 3600
+      VisibilityTimeout: 300   # 5 min for repository clone + analysis
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt GitHubAnalysisDLQ.Arn
+        maxReceiveCount: 2
+
+  GitHubAnalysisDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-github-analysis-dlq"
+      MessageRetentionPeriod: 1209600
+
+  # ═══════════════════════════════════════════════
+  # 9. AWS COGNITO
+  # ═══════════════════════════════════════════════
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${EnvironmentName}-user-pool"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      PasswordPolicy:
+        MinimumLength: 8
+        RequireUppercase: true
+        RequireLowercase: true
+        RequireNumbers: true
+        RequireSymbols: true
+      Schema:
+        - Name: profileType
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${EnvironmentName}-app-client"
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 1       # 1 hour
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30     # 30 days
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+  CandidateGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: CANDIDATE
+      UserPoolId: !Ref CognitoUserPool
+      Description: Candidate users searching for and booking interviews
+
+  InterviewerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: INTERVIEWER
+      UserPoolId: !Ref CognitoUserPool
+      Description: Interviewer users conducting mock interviews
+
+  # ═══════════════════════════════════════════════
+  # 10. AMAZON ECR REPOSITORIES
+  # ═══════════════════════════════════════════════
+  ECRApiGateway:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/api-gateway"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRProfileService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/profile-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRBookingService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/booking-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRSubmissionService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/submission-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRLiveSessionService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/live-session-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRMessagingService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/messaging-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  ECRSearchService:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${EnvironmentName}/search-service"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"Keep last 10 images",
+          "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},
+          "action":{"type":"expire"}}]}
+
+  # ═══════════════════════════════════════════════
+  # 11. COTURN EC2 (TURN/STUN for WebRTC)
+  # ═══════════════════════════════════════════════
+  CoturnInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref CoturnInstanceType
+      ImageId: !Ref AmazonLinux2AMI
+      SubnetId: !Ref PublicSubnetA
+      SecurityGroupIds:
+        - !Ref CoturnSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-coturn"
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          amazon-linux-extras enable epel
+          yum install -y coturn
+          # Basic Coturn configuration
+          cat > /etc/coturn/turnserver.conf << 'EOF'
+          listening-port=3478
+          tls-listening-port=5349
+          min-port=49152
+          max-port=65535
+          fingerprint
+          lt-cred-mech
+          realm=hiresphere.local
+          log-file=/var/log/coturn/turnserver.log
+          EOF
+          systemctl enable coturn
+          systemctl start coturn
+
+# ─────────────────────────────────────────────────────────────────
+# OUTPUTS
+# ─────────────────────────────────────────────────────────────────
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${EnvironmentName}-VPCId"
+
+  EKSClusterName:
+    Description: EKS Cluster name
+    Value: !Ref EKSCluster
+    Export:
+      Name: !Sub "${EnvironmentName}-EKSCluster"
+
+  EKSClusterEndpoint:
+    Description: EKS API endpoint
+    Value: !GetAtt EKSCluster.Endpoint
+
+  RDSEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${EnvironmentName}-RDSEndpoint"
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub "${EnvironmentName}-UserPoolId"
+
+  CognitoClientId:
+    Description: Cognito App Client ID
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub "${EnvironmentName}-CognitoClientId"
+
+  S3BucketName:
+    Description: S3 submissions bucket name
+    Value: !Ref SubmissionsBucket
+    Export:
+      Name: !Sub "${EnvironmentName}-S3Bucket"
+
+  BookingEventsQueueURL:
+    Description: SQS queue URL for booking events
+    Value: !Ref BookingEventsQueue
+
+  GitHubAnalysisQueueURL:
+    Description: SQS queue URL for GitHub analysis jobs
+    Value: !Ref GitHubAnalysisQueue
+
+  CoturnPublicIP:
+    Description: Coturn TURN server public IP
+    Value: !GetAtt CoturnInstance.PublicIp
+
+  ECRRegistryBase:
+    Description: ECR registry base URL
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EnvironmentName}"
